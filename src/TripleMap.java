@@ -1,8 +1,10 @@
 import java.util.HashSet;
+import java.util.Scanner;
 
 import static java.lang.Math.abs;
 import static java.lang.Math.pow;
 import static java.lang.Math.random;
+import static java.lang.Math.ceil;
 
 /*
 
@@ -39,10 +41,42 @@ import static java.lang.Math.random;
 
 В случае, когда разница длин краев не делится на 3, центр карты будет в точке соединения трех гексов с координатами 1:1,
 -1:1, 1:-1, в этом случае на карте нет нулевых линий, за -1 идет 1.
+
+Математика для подсчета случайных гексов:
+    Формула для счета суммы чисел от N до 1: N*(N+1)/2, от N до M включительно: N*(N+1)/2 - (M-1)*M/2
+Определение числа гексов (range) в правильном шестиугольнике (a = fB == bB):
+длина наибольшего (среднего) ряда клеток в шестиугольнике: b = 2*a - 1
+Для вычисления площади нужно взять два раза сумму от b (от среднего ряда в обе стороны число клеток уменьшается),
+вычесть из нее b, т.к. средний ряд только один и вычесть два раза сумму от a-1.
+    2*(b*(b+1)/2) - b - 2*((a-1)*a/2) => 3*a*(a - 1) + 1
+Определение нулевого гекса в правильном шестиугольнике: соответственно, т.к. фигура симметрична, будет
+    3*a*(a-1)/2
+
+Определение числа гексов для карты с fB != bB:
+
+Длина наибольшего ряда карты: mR = fB + bB - 1
+Тогда по тому же принципу число гексов карты (range) будет равно двум суммам от mR минус mR минус
+сумма от bB-1 минус сумму от fB-1
+    2*(mR+1)*mR/2 - mR - bB*(bB-1)/2 - fB(fB-1)/2 =>
+    2*(fB + bB -1)*(fB + bB -1) - (bB*bB - bB + fB*fB - fB)/2
+Т.к. карта неправильной формы, положение центрального гекса с координатами 0:0 и среднего гекса наибольшего ряда
+будут отличаться.
+Положение центрального гекса (0:0), если он есть на карте (если (fB - bB)%3 == 0), в range можно найти от положения
+центрального гекса в правильном шестиугольнике. Найти сторону правильного шестиугольника в
+        hB = fB -(fB - bB)*2/3, если fB > bB
+Тогда номер центрального гекса карты будет равен сумме центрального гекса шестиугольника со стороной hB и части карты,
+которая выдается за его пределы:
+        3*hB*(hB - 1)/2 + (hB*(hB - 1) - bB*(bB-1))/2 =>
+        2*hB*(hB - 1) - bB*(bB - 1)/2
+
+
  */
 
 public class TripleMap extends BattleMap{
 
+    enum Zone {BIGGER, INTERSECTING, SMALLER}
+
+    Zone zone = Zone.BIGGER;
 
     class Hex extends BattleMap.Hex{
         private int z;
@@ -65,16 +99,25 @@ public class TripleMap extends BattleMap{
         public String toString(){
             return "x: " + getX() + ", y: " + getY() + ", z: " + getZ();
         }
+
+        @Override
+        public int hashCode() {
+            return x*xFactor + y;
+        }
     }
 
     HashSet<Hex> hexes;
 
-    int fB;   // faceBoard - number of hexes in side at which player sits
-    int bB;   // backBoard - number of hexes in far side from the player
-    int fC;   // faceToCenter - number of rows from player's side to center
-    int bC;   // backToCenter - number of rows from far side to center
+    int zS;
+    Hex zC = new Hex(0,0);
+    int range;          // number of available map's hexes for random
+
+    int fB;             // faceBoard - number of hexes in side at which player sits
+    int bB;             // backBoard - number of hexes in far side from the player
+    int fC;             // faceToCenter - number of rows from player's side to center
+    int bC;             // backToCenter - number of rows from far side to center
     boolean skipZeroRow;// true if map has central hex, false if center is between hexes
-    int numberOfHexes;  // number of map's hexes for random
+    int xFactor;        // factor for X in overriden hashCode function in Hex. Next prime number from bigger border
 
     TripleMap(int fB, int bB) {
 
@@ -84,11 +127,26 @@ public class TripleMap extends BattleMap{
         bC = (bB + 2*fB)/3 - 1;
         hexes = new HashSet<>();
 
-        numberOfHexes = (int)(pow(fB + bB - 1, 2) - (pow(fB,2) - fB + pow(bB,2) - bB)/2);
+        range = (int)(pow(fB + bB - 1, 2) - (pow(fB,2) - fB + pow(bB,2) - bB)/2);
+
+        // Посчитать множитель для вычисления хэша гексов
+        xFactor = fB > bB? fB : bB;
+        zS = xFactor;
+        while (true){
+            boolean isPrime = true;
+            for (int i = 2; i < xFactor/2; i++) {
+                if (xFactor % i == 0) {
+                    isPrime = false;
+                    break;
+                }
+            }
+            if (isPrime == false) xFactor++;
+            else break;
+        }
 
         if ((fB - bB) % 3 == 0) skipZeroRow = false;
         else{
-            System.out.println("Если (fB - bB)%3 != 0 - карта не имеет центрального гекса, ничего не работает");
+            System.out.println("Если (fB - bB)%3 != 0 - НЕТ ЦЕНТРАЛЬНОГО ГЕКСА, ТАК НЕ РАБОТАЕТ");
             skipZeroRow = true;
         }
 
@@ -97,7 +155,7 @@ public class TripleMap extends BattleMap{
         System.out.println("faceToCenter:\t" + fC);
         System.out.println("backToCenter:\t" + bC);
         System.out.println("skipZeroRow:\t" + skipZeroRow);
-        System.out.println("numberOfHexes:\t" + numberOfHexes);
+        System.out.println("range of hexes:\t" + range);
     }
 
     void addHex(int x, int y){
@@ -111,29 +169,17 @@ public class TripleMap extends BattleMap{
         }
     }
 
-    void checkHex(int x, int y){
-        if (hexes.contains(new Hex(x,y))) System.out.print("Contains "+x+":"+y);
-        else System.out.print("No hex " + x + ":"+y);
+    void drawHex(Hex hex){
+        if (hexes.contains(hex)) System.out.print("X");
+        else if(hex.y == 0 && hex.x == 0) System.out.print("0");
+        else if (!checkZone(hex)) System.out.print("-");
+        else if (hex.x == 0 || hex.y == 0 || hex.z == 0) System.out.print(" ");
+        else System.out.print(" ");
     }
 
-    void drawMap() {
-        for (int i = 0; i < fB; i++) {
-            for (int j = 0; j < fB - i; j++) System.out.print(" ");
-            for (int j = 0; j < bB + i; j++) System.out.print("| ");
-            System.out.println("|");
-        }
-        for (int i = 2; i <= bB; i++) {
-            for (int j = 0; j < i; j++) System.out.print(" ");
-            for (int j = 0; j < fB + bB - i; j++) System.out.print("| ");
-            System.out.println("|");
-        }
-    }
-
-     void drawMapC() {
-
-
+    void draw() {
         if(skipZeroRow){
-            System.out.println("Если (fB - bB)%3 != 0 - карта не имеет центрального гекса, ничего не работает");
+            System.out.println("Если (fB - bB)%3 != 0 - НЕТ ЦЕНТРАЛЬНОГО ГЕКСА, ТАК НЕ РАБОТАЕТ");
 
             /*for (int i = -bC; i < -bC + fB; i++) {
                 for (int j = 0; j < fB - bC - i; j++) System.out.print(" ");
@@ -149,66 +195,153 @@ public class TripleMap extends BattleMap{
                 System.out.println("|");
             }*/
         }else {
+            for (int i = 0; i < fB + 4; i++) System.out.print(" ");
+            for (int i = -fC; i <= bC; i++) System.out.printf("%2d", i);
+            System.out.println();
             for (int i = bC; i > bC - fB; i--) {
+                System.out.printf("%3d ", i);
                 for (int j = bC - fB; j < i - 1; j++) System.out.print(" ");
                 for (int j = -fC; j < -fC + bB + bC - i; j++) {
                     System.out.print("|");
-                    if (hexes.contains(new Hex(i,j))) System.out.print("X");
-                    if (i==0 || j == 0) System.out.print("0");
-                    else System.out.print(" ");
+                    Hex hex = new Hex(i,j);
+                    drawHex(hex);
                 }
                 System.out.println("|");
             }
-
-            //System.out.println();
-
             for (int i = bC - fB; i >= -fC; i--) {
+                System.out.printf("%3d ", i);
                 for (int j = bC - fB; j > i - 1; j--) System.out.print(" ");
                 for (int j = -fC + bC - fB - i + 1; j < bC + 1; j++){
                     System.out.print("|");
-                    if (hexes.contains(new Hex(i,j))) System.out.print("X");
-                    if (i==0 || j == 0) System.out.print("0");
-                    else System.out.print(" ");
+                    Hex hex = new Hex(i,j);
+                    drawHex(hex);
                 }
                 System.out.println("|");
             }
         }
     }
 
-    Hex getRandomHex(int distance) {
+    boolean checkZone(Hex hex){
+        if (hex.x < zC.x - zS + 1 || hex.x > zC.x + zS - 1
+                || hex.y < zC.y - zS + 1 || hex.y > zC.y + zS - 1
+                || hex.z < zC.z - zS + 1 || hex.z > zC.z + zS - 1 )
+        {
+            return false;
+        }else return true;
+    }
+
+    void moveZone(int moveX, int moveY, int moveSize){
+        zC.x += moveX;
+        zC.y += moveY;
+        zC.z += -moveX -moveY;
+        zS += moveSize;
+
+        if (zC.x + zS >= bB && zC.x - zS <= fB
+                && zC.x + zS >= bB && zC.x - zS <= fB
+                && zC.x + zS >= bB && zC.x - zS <= fB) zone = Zone.BIGGER;
+        else if (zC.x + zS < bB && zC.x - zS > fB
+                && zC.x + zS < bB && zC.x - zS > fB
+                && zC.x + zS < bB && zC.x - zS > fB) zone = Zone.SMALLER;
+        else zone = Zone.INTERSECTING;
+    }
+
+    void changeZone(int moveX, int moveY, int moveSize){
+        zC.x = moveX;
+        zC.y = moveY;
+        zC.z = -moveX -moveY;
+        zS = moveSize;
+
+        if (zC.x + zS - 1 >= bC && zC.x - zS + 1<= -fC
+                && zC.y + zS - 1 >= bC && zC.y - zS + 1 <= -fC
+                && zC.z + zS - 1 >= bC && zC.z - zS + 1 <= -fC)
+        {
+            zone = Zone.BIGGER;
+            range = (int)(pow(fB + bB - 1, 2) - (pow(fB,2) - fB + pow(bB,2) - bB)/2);
+        }
+        else if (zC.x + zS - 1 <= bC && zC.x - zS + 1 >= -fC
+                && zC.y + zS - 1 <= bC && zC.y - zS + 1 >= -fC
+                && zC.z + zS - 1 <= bC && zC.z - zS + 1 >= -fC)
+        {
+            zone = Zone.SMALLER;
+            range = 3*zS*(zS - 1) + 1;
+        }
+        else {
+            zone = Zone.INTERSECTING;
+            range = 0;
+            System.out.println("No realization for zone = Zone.INTERSECTION");
+        }
+
+    }
+
+    void addRandomHex(int distance) {
         /*
         Для равномерной генерации нужно выбирать не один из координат, а затем вторую, т.к. число клеток в рядо может быть
         разным. Нужен выбор одной из всего числа клеток. Получаем номер клетки, дальше надо рассчитать ее координаты.
         */
 
+
         while (true) {
-            int hexNumber = (int)(random() * numberOfHexes);
-            int halfHex = (fB + bB - 1)*(fB + bB)/2 - fB*(fB-1)/2;
-            int rowLength = fB+bB-2;
             int x;
             int y;
-            if (hexNumber < halfHex){
-                x = halfHex - hexNumber;
-                y = bC - fB + 1;
+            int hexNumber;
 
-                while (x > bB){
-                    y++;
-                    x-= rowLength--;
+            if (zone == Zone.BIGGER) {
+                int halfHex = (fB + bB - 1) * (fB + bB) / 2 - bB * (bB - 1) / 2;
+                //hexNumber = (int)ceil(random()*range - halfHex);
+                hexNumber = new Scanner(System.in).nextInt();
+                if (hexNumber < 0) {
+                    int rowLength = - fB - bB + 1;
+                    y = hexNumber;
+                    x = bC - fB + 1;
+
+                    while (y < rowLength) {
+                        x++;
+                        y -= rowLength++;
+                    }
+                    y += bC - x - (fB - bB)/3 + 1;
+                } else {
+                    int rowLength = fB + bB - 2;
+                    y = hexNumber;
+                    x = bC - fB;
+                    while (y >= rowLength) {
+                        x--;
+                        y -= rowLength--;
+                    }
+                    y += - fC - x - (fB - bB) / 3;
                 }
-            }else{
-                x = hexNumber - halfHex;
-                y = bC - fB + 1;
-                while (x > fB){
-                    y--;
-                    x-= rowLength--;
+            } else if (zone == Zone.SMALLER){
+
+                hexNumber = ((int)ceil(random()*range - range/2 - 1));
+                int rowLength = 2*zS - 1;
+                int zoneY = abs(hexNumber) + zS;
+                int zoneX = 0;
+                while (zoneY > rowLength){
+                    zoneX++;
+                    zoneY -= rowLength--;
+                }
+                zoneY += zoneX - zS;
+                x = ((hexNumber > 0)? zoneX : -zoneX) + zC.x;
+                y = ((hexNumber > 0)? -zoneY : zoneY) + zC.y;
+
+            } else { // if (zone = Zone.INTERSECTING)
+                hexNumber = 0;
+                x = 0;
+                y = 0;
+            }
+
+            boolean isGood = true;
+            for (BattleMap.Hex hex : hexes) {
+                if (false) { // check if distance from other hexes is fine
+                    isGood = true;
+                    break;
                 }
             }
-            return new Hex(x,y);
-            /*for (BattleMap.Hex hex : hexes) {
-                if (abs(x - hex.getX()) <= distance && abs(y - hex.getY()) <= distance) {
-                    return new Hex(x, y);
-                }
-            }*/
+            if (isGood == true)
+            {
+                hexes.add(new Hex(x,y));
+                System.out.printf("hex#%d - %d:%d\n", hexNumber, x,y );
+                break;
+            }
         }
     }
 }
